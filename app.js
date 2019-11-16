@@ -18,8 +18,8 @@ const cookieParser = require('cookie-parser')
 
 const changePasswordTokenMap = {}
 
-const dbPromise = sqlite.open(__dirname + './static/voting-site.sqlite3')
-
+const dbPromise = sqlite.open(__dirname + './db/voting-site.sqlite3')
+let db
 
 
 app.use((req, res , next) => {
@@ -75,12 +75,13 @@ app.route('/register')
         <button>注册</button>
       </form> 
     `)
-  }).post((req, res, next)=> {
-    var userInfo = req.body
-    console.log(userInfo)
-    if(users.findIndex(it =>it.name == userInfo.name) >= 0) {
+  }).post(async (req, res, next)=> {
+    var regInfo = req.body
+    var user = await db.get('SELECT * FROM users WHERE name=?',regInfo.name )
+    if(user) {
       res.end('用户名已被占用')
     } else {
+      await db.run('INSERT INTO users (name, email, password) VALUES (?,?,?)',regInfo.name, regInfo.email, regInfo.password)
       res.end(`
         注册成功，<span id="countDown">3</span>秒后将跳转登录页面...
         <script>
@@ -93,7 +94,6 @@ app.route('/register')
           },3000)
         </script>
       `)
-      users.push(userInfo)
     }
   })
 
@@ -130,9 +130,10 @@ app.route('/register')
         }
       </script>
     `)})
-    .post((req, res, next) => {
+    .post(async(req, res, next) => {
       var tryloginUser = req.body
-      if(users.findIndex(it => it.name == tryloginUser.name && it.password == tryloginUser.password ) >= 0) {
+      var user = await db.get('SELECT * FROM users WHERE name=? AND password=?',tryloginUser.name, tryloginUser.password )
+      if(user) {
         res.cookie('user', tryloginUser.name, {
           signed: true
         })
@@ -167,8 +168,12 @@ app.route('/forgot')
         <button>确定</button>
       </form>
     `)
-  }).post((req, res, next)=> {
+  }).post(async(req, res, next)=> {
     var email = req.body.email
+    var user = await db.get('SELECT * FROM users WHERE email=?',email)
+    if(!user) {
+      res.end('不存在此用户')
+    }
     var token = Math.random().toString().slice(2)
 
     changePasswordTokenMap[token] = email
@@ -195,30 +200,32 @@ app.route('/forgot')
   })
 
 app.route('/change-password/:token')
-  .get((req, res, next) => {
+  .get(async(req, res, next) => {
     var token =  req.params.token
-    var user = users.find(it=> it.email == changePasswordTokenMap[token])
-    res.end(`
-      此页面可以重置${user.name}的密码
+    var name = changePasswordTokenMap[token]
+    if(!name) {
+      res.end('链接已失效')
+      return 
+    }
+    res.end(` 
+      此页面可以重置密码
       <form action=" " method="post" >
         新密码<input type="password" name= "password"/>
         <button>提交</button>
       </form> 
     `)
   })
-  .post((req,res,next)=> {
+  .post(async(req,res,next)=> {
     var token =  req.params.token
-    var user = users.find(it=> it.email == changePasswordTokenMap[token])
+    var email = changePasswordTokenMap[token]
     var password = req.body.password
-    if(user) {
-      user.password = password
-
-      delete changePasswordTokenMap[token]
-
-      res.end('密码修改成功')
-    } else {
-      res.end('此链接已失效')
+    if(!email) {
+      res.end('链接已失效')
+      return
     }
+      delete  changePasswordTokenMap[token]
+      await db.run('UPDATE users SET password=? WHERE email=?', password, email)
+      res.end('密码修改成功')
   })
 
 
