@@ -1,6 +1,11 @@
 const express = require('express')
 const mailer = require('./mailer.js')
 const app = express()
+app.locals.pretty = true //美化模板
+// const pug = require('pug')
+app.set('views', __dirname + '\\tpl')
+app.set('view engine', 'pug')
+
 const sqlite = require('sqlite')
 const port = 3000
 
@@ -30,7 +35,9 @@ app.use((req, res , next) => {
 app.use(cookieParser('my secret'))
 
 app.use(express.static(__dirname + '/static'))
-
+//解析json中间体编码
+app.use(express.json()) 
+//解析url中间体编码
 app.use(express.urlencoded({
   extended: true
 }))
@@ -38,11 +45,11 @@ app.use(express.urlencoded({
 app.get('/', (req, res ,next)=> {
   console.log(req.cookies)
   console.log(req.signedCookies)
-  if(req.signedCookies.user) {
+  if(req.signedCookies.userid) {
     res.send(`
       <div>
-      <span>Welcome ,${req.signedCookies.user}</span>
-        <a href="/create">创建投票</a>
+      <span>Welcome ,${req.signedCookies.userid}</span>
+        <a href="/create.html">创建投票</a>
         <a href="/logout">登出  </a>
       </div>
     `)
@@ -55,15 +62,79 @@ app.get('/', (req, res ,next)=> {
     `)
   }
 })
-app.get('/create', (req, res ,next)=> {
-  
+app.post('/create-vote',async(req, res ,next)=> {
+  // console.log(req.body)
+  // console.log(req.signedCookies.userid)
+  var userid = req.signedCookies.userid
+  var voteInfo = req.body
+  await  db.run('INSERT INTO votes (title, desc, userid, singleSelection, deadline, anonymouse) VALUES (?,?,?,?,?,?)',voteInfo.title, voteInfo.desc, userid, voteInfo.singleSelection, new Date(voteInfo.deadline).getTime(), voteInfo.anonymouse)
+  var vote = await db.get('SELECT * FROM votes ORDER BY id DESC LIMIT 1')
+  voteInfo.options.map(option=> {
+    return db.run('INSERT INTO options (content,voteid) VALUES (?,?)',option,vote.id)
+  })
+  // res.end('投票已创建！编号为' + vote.id)
+  res.redirect('/vote/' + vote.id)
 })
 
 
-app.get('/vote/:id',(req, res ,next)=> {
-  
+app.get('/vote/:id',async(req, res ,next)=> {
+  var votePromise = db.get('SELECT * FROM votes WHERE id=?', req.params.id)
+  var optionsPromise = db.all('SELECT * FROM options WHERE voteid=?',req.params.id)
+
+  var vote = await votePromise
+  var options = await optionsPromise
+
+  res.render('vote.pug', {
+    vote : vote,
+    options : options
+  })
+
+
+
+  // res.end(`
+  //   <h1>${vote.title}</h1>
+  //   <h3>${vote.desc}</h3>
+  //   ${
+  //     options.map(option => {
+  //       return `
+  //         <div data-option-id = "${option.id}">
+  //           <span>${option.content}</span>
+  //         </div>
+  //       `
+  //     }).join('')
+  //   }
+  // `)
+})
+//某个用户获取某个投票的数量
+app.get('/voteup/:voteid/info',async(req, res , next)=> {
+  var userid = req.signedCookies.userid
+  var voteid = req.params.voteid
+  var userVoteupInfo = await db.get('SELECT * FROM voteups WHERE userid=? AND voteid=?' , userid, voteid)
+  if(userVoteupInfo) {
+    var voteups = db.all('SELECT * FROM voteups WHERE voteid=?', voteid)
+    res.json(voteups)
+  } else {
+    res.json(null)
+  }
 })
 
+app.post('/voteup', async(req,res, next)=> {
+  // console.log(req.body)
+  // console.log(req.signedCookies.userid)  
+  var userid = req.signedCookies.userid
+  var body = req.body
+  var voteupInfo = await db.get('SELECT * FROM voteups WHERE userid=? AND voteid=?',userid, body.voteid)
+
+
+  if(voteupInfo) {
+    await db.run('UPDATE voteups SET optionid=? WHERE userid=? AND voteid=?',body.optionid,userid, body.voteid)
+  } else {
+    await db.run('INSERT INTO voteups (userid, optionid, voteid) VALUES (?,?,?)',req.signedCookies.userid, req.body.optionid,req.body.voteid)
+  }
+
+  var voteups = await db.all('SELECT * FROM voteups WHERE voteid=?',req.body.voteid)
+  res.json(voteups)
+})
 
 app.route('/register')
   .get((req, res,next) => {
@@ -134,7 +205,7 @@ app.route('/register')
       var tryloginUser = req.body
       var user = await db.get('SELECT * FROM users WHERE name=? AND password=?',tryloginUser.name, tryloginUser.password )
       if(user) {
-        res.cookie('user', tryloginUser.name, {
+        res.cookie('userid', user.id, {
           signed: true
         })
         res.json({
@@ -230,7 +301,7 @@ app.route('/change-password/:token')
 
 
 app.get('/logout', (req, res, next) => {
-  res.clearCookie('user')
+  res.clearCookie('userid')
   res.redirect('/')
 })
 

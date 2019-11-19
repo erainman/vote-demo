@@ -1,0 +1,42 @@
+extends layout.pug
+
+
+block content
+  h1= vote.title
+  h3= vote.desc
+  ul(data-voteid=vote.id)#option-list
+    each option in options 
+      li(data-optionid=option.id)= option.content
+        span
+
+  script.
+    var optionList = document.querySelector('#option-list')
+
+    async function main() {
+      var voteRes = await axios.get(`/voteup/${optionList.dataset.voteid}/info`)
+      console.log(voteRes)
+      if(voteRes.data == null) {
+        return 
+      }
+      var counted = _.countBy(voteRes.data,'optionid')
+      _.forEach(counted,(val, key) => {
+        document.querySelector(`[data-optionid="${key}"]`).lastChild.textContent = '/' + val + '票'
+      })
+    }
+
+
+    main()
+
+
+    optionList.addEventListener('click', async e => {
+      var optionid = e.target.dataset.optionid
+      var voteRes = (await axios.post('/voteup', {
+        voteid: optionList.dataset.voteid,
+        optionid: optionid,
+      })).data
+
+      var counted = _.countBy(voteRes,'optionid')
+      _.forEach(counted,(val, key) => {
+        document.querySelector(`[data-optionid="${key}"]`).lastChild.textContent = '/' + val + '票'
+      })
+    })
